@@ -6,7 +6,7 @@ Available in **Python** and **Node.js** — zero external dependencies.
 
 ## The Problem
 
-LLM APIs enforce tokens-per-minute limits (e.g., 80K TPM). When agents read large files or web pages, they easily blow past this limit and get `429 Too Many Requests` errors. Retrying blindly just compounds the problem.
+LLM APIs enforce tokens-per-minute limits (e.g., 30K TPM). When agents read large files or web pages, they easily blow past this limit and get `429 Too Many Requests` errors. Retrying blindly just compounds the problem.
 
 ## The Solution
 
@@ -22,7 +22,7 @@ LLM APIs enforce tokens-per-minute limits (e.g., 80K TPM). When agents read larg
 ```python
 from token_throttle import TokenThrottle
 
-throttle = TokenThrottle(tokens_per_minute=80000)
+throttle = TokenThrottle(tokens_per_minute=30000)
 
 content = open("big_file.txt").read()
 
@@ -36,7 +36,7 @@ for chunk in throttle.consume(content):
 ```javascript
 const { TokenThrottle } = require("./token_throttle");
 
-const throttle = new TokenThrottle({ tokensPerMinute: 80000 });
+const throttle = new TokenThrottle({ tokensPerMinute: 30000 });
 
 const content = fs.readFileSync("big_file.txt", "utf-8");
 
@@ -52,7 +52,7 @@ for await (const chunk of throttle.consume(content)) {
 
 | Option | Default | Description |
 |---|---|---|
-| `tokens_per_minute` / `tokensPerMinute` | `80000` | Your TPM budget |
+| `tokens_per_minute` / `tokensPerMinute` | `30000` | Your TPM budget |
 | `margin` | `0.85` | Safety margin (uses 85% of budget by default) |
 | `chunk_size` / `chunkSize` | `null` | Max tokens per chunk (defaults to `budget * margin`) |
 | `chars_per_token` / `charsPerToken` | `4` | Characters-per-token ratio for estimation |

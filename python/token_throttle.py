@@ -6,7 +6,7 @@ Zero dependencies. Drop into any project.
 Usage:
     from token_throttle import TokenThrottle
 
-    throttle = TokenThrottle(tokens_per_minute=80000)
+    throttle = TokenThrottle(tokens_per_minute=30000)
 
     # Auto-chunk and throttle large content
     for chunk in throttle.consume(large_text):
@@ -27,7 +27,7 @@ class TokenThrottle:
 
     def __init__(
         self,
-        tokens_per_minute: int = 80_000,
+        tokens_per_minute: int = 30_000,
         margin: float = 0.85,
         chunk_size: Optional[int] = None,
         chars_per_token: float = 4.0,

@@ -22,11 +22,11 @@ Before reading any file or URL, estimate tokens first:
 - **URLs:** Send a HEAD request, use `Content-Length / 4`
 - **Text already in memory:** `len(text) / 4`
 
-If the estimate exceeds ~60K tokens, chunk before sending to the API.
+If the estimate exceeds ~25K tokens, chunk before sending to the API.
 
 ## When to Throttle
 
-- Single file/page > 50K estimated tokens → chunk it
+- Single file/page > 20K estimated tokens → chunk it
 - Multiple files in sequence → track cumulative usage per 60s window
 - After any 429 error → wait 60s, then resume with smaller chunks
 
@@ -35,7 +35,7 @@ If the estimate exceeds ~60K tokens, chunk before sending to the API.
 ```python
 from token_throttle import TokenThrottle
 
-throttle = TokenThrottle(tokens_per_minute=80000)
+throttle = TokenThrottle(tokens_per_minute=30000)
 
 # Read and process large content in throttled chunks
 content = open("large_file.txt").read()
@@ -53,7 +53,7 @@ Copy `python/token_throttle.py` into your project. Zero dependencies.
 
 ```javascript
 const { TokenThrottle } = require("./token_throttle");
-const throttle = new TokenThrottle({ tokensPerMinute: 80000 });
+const throttle = new TokenThrottle({ tokensPerMinute: 30000 });
 
 const content = fs.readFileSync("large_file.txt", "utf-8");
 for await (const chunk of throttle.consume(content)) {
@@ -73,7 +73,7 @@ from token_throttle import estimate_file_tokens, estimate_url_tokens
 tokens = estimate_file_tokens("report.pdf")  # uses file size
 tokens = estimate_url_tokens("https://example.com/page")  # uses HEAD Content-Length
 
-if tokens and tokens > 60000:
+if tokens and tokens > 25000:
     # Use throttle.consume() to chunk
     ...
 ```
@@ -82,13 +82,13 @@ if tokens and tokens > 60000:
 
 | Parameter | Default | Use |
 |---|---|---|
-| `tokens_per_minute` | 80000 | Match your API's TPM limit |
+| `tokens_per_minute` | 30000 | Match your API's TPM limit |
 | `margin` | 0.85 | Lower (0.7) for concurrent requests |
 | `chunk_size` | budget | Override max tokens per chunk |
 
 ## Rules
 
 1. **Always estimate before reading** large or unknown-size content
-2. **Use `consume()`** for anything over 50K estimated tokens
+2. **Use `consume()`** for anything over 20K estimated tokens
 3. **Lower margin to 0.7** when making concurrent API calls
 4. **Strip HTML/JS/CSS** from web pages before estimating — raw HTML inflates token count 2-5x

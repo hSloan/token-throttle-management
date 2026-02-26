@@ -5,7 +5,7 @@
  *
  * Usage:
  *   const { TokenThrottle } = require('./token_throttle');
- *   const throttle = new TokenThrottle({ tokensPerMinute: 80000 });
+ *   const throttle = new TokenThrottle({ tokensPerMinute: 30000 });
  *
  *   for await (const chunk of throttle.consume(largeText)) {
  *     const response = await callYourApi(chunk);
@@ -15,13 +15,13 @@
 class TokenThrottle {
   /**
    * @param {Object} options
-   * @param {number} [options.tokensPerMinute=80000] - Your TPM limit.
+   * @param {number} [options.tokensPerMinute=30000] - Your TPM limit.
    * @param {number} [options.margin=0.85] - Safety factor (0-1).
    * @param {number} [options.chunkSize] - Max tokens per chunk. Defaults to budget.
    * @param {number} [options.charsPerToken=4] - Characters-per-token ratio.
    */
   constructor({
-    tokensPerMinute = 80000,
+    tokensPerMinute = 30000,
     margin = 0.85,
     chunkSize = null,
     charsPerToken = 4,
@@ -51,7 +51,7 @@ class TokenThrottle {
 
   _maybeResetWindow() {
     const elapsed = Date.now() - this._windowStart;
-    if (elapsed >= 60000) {
+    if (elapsed >= 25000) {
       this._tokensUsed = 0;
       this._windowStart = Date.now();
     }
@@ -78,7 +78,7 @@ class TokenThrottle {
     }
 
     const elapsed = Date.now() - this._windowStart;
-    const sleepMs = Math.max(0, 60000 - elapsed + 500); // +500ms buffer
+    const sleepMs = Math.max(0, 25000 - elapsed + 500); // +500ms buffer
 
     if (sleepMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, sleepMs));
@@ -169,7 +169,7 @@ class TokenThrottle {
 
   get secondsUntilReset() {
     const elapsed = Date.now() - this._windowStart;
-    return Math.max(0, (60000 - elapsed) / 1000);
+    return Math.max(0, (25000 - elapsed) / 1000);
   }
 
   toString() {
