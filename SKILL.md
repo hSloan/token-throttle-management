@@ -92,3 +92,36 @@ if tokens and tokens > 25000:
 2. **Use `consume()`** for anything over 20K estimated tokens
 3. **Lower margin to 0.7** when making concurrent API calls
 4. **Strip HTML/JS/CSS** from web pages before estimating — raw HTML inflates token count 2-5x
+
+
+---
+
+## Concurrent Sub-Agent Budget Rule
+
+**The 30K TPM limit is per API key — shared across the main session and ALL sub-agents.**
+
+When running sub-agents alongside the main session, apply these rules:
+
+- **Sub-agents must budget to ≤ 15,000–20,000 TPM effective** to leave headroom for the main session
+- **Never run two read-heavy sub-agents concurrently** — they will race each other to the limit and both 429
+- **Main session should idle** (stop making reads/writes) while a sub-agent is performing heavy file or web operations
+- **Stagger spawns** — spawn one sub-agent, let it complete its heavy reads before spawning the next
+- **On 429 in a sub-agent:** wait 60s before retrying; inform the main session if budget is critically low
+
+### Sub-agent `sessions_spawn` task template addition
+
+Every task passed to a sub-agent via `sessions_spawn` must include this block:
+
+```
+## Token Throttle (MANDATORY)
+The 30K TPM limit is SHARED across ALL agents on this API key (main session + all sub-agents).
+Sub-agents must budget for ~15K–20K TPM effective to leave headroom for the main session.
+
+Before reading ANY file or fetching ANY URL:
+1. Estimate tokens: file → file_size/4, URL → HEAD Content-Length/4, text → len(text)/4
+2. If > 50K tokens → chunk using .../skills/token-throttle-management/python/token_throttle.py
+3. On 429 error → wait 60s, retry with smaller chunks
+4. Track cumulative token usage across all reads in a 60s window
+5. Never read multiple large files back-to-back without throttle checks
+6. Default to conservative pacing — read one file, pause, read the next
+```
