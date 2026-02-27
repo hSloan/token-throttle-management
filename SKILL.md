@@ -78,13 +78,60 @@ if tokens and tokens > 25000:
     ...
 ```
 
+## Sub-Agent Usage
+
+Use `SubAgentThrottle` to enforce the 15K TPM ceiling automatically — no manual math needed:
+
+```python
+from token_throttle import SubAgentThrottle
+
+throttle = SubAgentThrottle()  # caps to 15K TPM by default
+for chunk in throttle.consume(large_text):
+    response = call_api(chunk)
+```
+
+```javascript
+const { SubAgentThrottle } = require("./token_throttle");
+const throttle = new SubAgentThrottle(); // caps to 15K TPM by default
+for await (const chunk of throttle.consume(largeText)) {
+  const response = await callApi(chunk);
+}
+```
+
+## Strict Mode
+
+Use `strict=True` to raise `BudgetExceeded` instead of silently waiting — makes oversized calls loud and explicit:
+
+```python
+from token_throttle import TokenThrottle, BudgetExceeded
+
+throttle = TokenThrottle(budget=15000, strict=True)
+try:
+    throttle.wait_if_needed(25000)
+except BudgetExceeded:
+    # Split the request or skip it
+    ...
+```
+
+```javascript
+const { TokenThrottle, BudgetExceeded } = require("./token_throttle");
+const throttle = new TokenThrottle({ budget: 15000, strict: true });
+try {
+  await throttle.waitIfNeeded(25000);
+} catch (e) {
+  if (e instanceof BudgetExceeded) { /* handle */ }
+}
+```
+
 ## Key Parameters
 
 | Parameter | Default | Use |
 |---|---|---|
 | `tokens_per_minute` | 30000 | Match your API's TPM limit |
 | `margin` | 0.85 | Lower (0.7) for concurrent requests |
+| `budget` | `tpm × margin` | Hard cap on effective TPM (useful for sub-agents) |
 | `chunk_size` | budget | Override max tokens per chunk |
+| `strict` | False | Raise `BudgetExceeded` instead of waiting |
 
 ## Rules
 
@@ -101,11 +148,11 @@ if tokens and tokens > 25000:
 
 When running sub-agents alongside the main session, apply these rules:
 
-- **Sub-agents must budget to ≤ 15,000–20,000 TPM effective** to leave headroom for the main session
+- **Sub-agents must budget to ≤ 15,000 TPM effective** (20K only when the main session is explicitly idle)
 - **Never run two read-heavy sub-agents concurrently** — they will race each other to the limit and both 429
 - **Main session should idle** (stop making reads/writes) while a sub-agent is performing heavy file or web operations
 - **Stagger spawns** — spawn one sub-agent, let it complete its heavy reads before spawning the next
-- **On 429 in a sub-agent:** wait 60s before retrying; inform the main session if budget is critically low
+- **On 429 in a sub-agent:** wait 60s before retrying; surface any budget warnings in the sub-agent's completion summary (the main session sees this when the sub-agent finishes)
 
 ### Sub-agent `sessions_spawn` task template addition
 
@@ -114,11 +161,15 @@ Every task passed to a sub-agent via `sessions_spawn` must include this block:
 ```
 ## Token Throttle (MANDATORY)
 The 30K TPM limit is SHARED across ALL agents on this API key (main session + all sub-agents).
-Sub-agents must budget for ~15K–20K TPM effective to leave headroom for the main session.
+Sub-agents must budget for ~15K TPM effective to leave headroom for the main session.
+
+Preferred: use SubAgentThrottle — it enforces the 15K ceiling automatically:
+    from token_throttle import SubAgentThrottle
+    throttle = SubAgentThrottle()  # caps to 15K TPM by default
 
 Before reading ANY file or fetching ANY URL:
 1. Estimate tokens: file → file_size/4, URL → HEAD Content-Length/4, text → len(text)/4
-2. If > 20K tokens → chunk using `TokenThrottle.consume()`
+2. If > 20K tokens → chunk using `TokenThrottle.consume()` or `SubAgentThrottle.consume()`
 3. On 429 error → wait 60s, retry with smaller chunks
 4. Track cumulative token usage across all reads in a 60s window
 5. Never read multiple large files back-to-back without throttle checks
