@@ -15,6 +15,23 @@ Usage:
     # Or manually gate individual calls
     throttle.wait_if_needed(estimated_tokens)
     response = call_your_api(content)
+
+Sub-agent usage (enforces shared budget automatically):
+    from token_throttle import SubAgentThrottle
+
+    throttle = SubAgentThrottle()  # caps to 15K TPM by default
+    for chunk in throttle.consume(large_text):
+        response = call_your_api(chunk)
+
+Strict mode (raises BudgetExceeded instead of silently waiting):
+    from token_throttle import TokenThrottle, BudgetExceeded
+
+    throttle = TokenThrottle(budget=15000, strict=True)
+    try:
+        throttle.wait_if_needed(25000)
+    except BudgetExceeded:
+        # handle oversized request
+        ...
 """
 
 import time
@@ -29,19 +46,27 @@ class TokenThrottle:
         self,
         tokens_per_minute: int = 30_000,
         margin: float = 0.85,
+        budget: Optional[int] = None,
         chunk_size: Optional[int] = None,
         chars_per_token: float = 4.0,
+        strict: bool = False,
     ):
         """
         Args:
             tokens_per_minute: Your TPM limit.
             margin: Safety factor (0-1). Effective budget = tpm * margin.
+            budget: Hard cap on effective TPM (useful for shared-limit sub-agents).
+                    Ceiling = min(budget, tpm * margin). Defaults to tpm * margin.
             chunk_size: Max tokens per yielded chunk. Defaults to effective budget.
             chars_per_token: Characters-per-token ratio for estimation (4 ≈ English).
+            strict: If True, raise BudgetExceeded instead of waiting when a single
+                    request exceeds the budget. Useful for catching oversized calls early.
         """
         self.tpm = tokens_per_minute
         self.margin = margin
-        self.budget = int(tokens_per_minute * margin)
+        self.strict = strict
+        _effective = int(tokens_per_minute * margin)
+        self.budget = min(budget, _effective) if budget is not None else _effective
         self.chunk_size = chunk_size or self.budget
         self.chars_per_token = chars_per_token
 
@@ -74,7 +99,16 @@ class TokenThrottle:
         Reserve `tokens` from the budget, sleeping if necessary.
 
         Returns seconds slept (0 if no wait was needed).
+
+        Raises:
+            BudgetExceeded: If strict=True and `tokens` exceeds the per-window budget.
         """
+        if self.strict and tokens > self.budget:
+            raise BudgetExceeded(
+                f"Request of {tokens} tokens exceeds budget of {self.budget} TPM. "
+                "Reduce the request size or lower strict=True."
+            )
+
         self._maybe_reset_window()
 
         if self._tokens_used + tokens <= self.budget:
@@ -165,7 +199,61 @@ class TokenThrottle:
     def __repr__(self) -> str:
         return (
             f"TokenThrottle(tpm={self.tpm}, budget={self.budget}, "
-            f"used={self._tokens_used}, remaining={self.remaining_tokens})"
+            f"used={self._tokens_used}, remaining={self.remaining_tokens}, "
+            f"strict={self.strict})"
+        )
+
+
+# ── Exceptions ─────────────────────────────────────────────────
+
+class BudgetExceeded(Exception):
+    """
+    Raised in strict mode when a single request exceeds the per-window budget.
+
+    Catch this to handle oversized requests explicitly rather than silently waiting.
+    """
+    pass
+
+
+# ── Sub-agent convenience ───────────────────────────────────────
+
+class SubAgentThrottle(TokenThrottle):
+    """
+    Pre-configured TokenThrottle for sub-agent use.
+
+    Enforces a conservative shared-budget ceiling automatically so sub-agents
+    don't accidentally consume the full API key TPM and starve the main session.
+
+    Default behavior: caps effective TPM to 50% of the total limit (15K on a 30K key).
+
+    Usage:
+        throttle = SubAgentThrottle()            # 15K TPM ceiling
+        throttle = SubAgentThrottle(budget_fraction=0.4)  # 12K TPM ceiling
+    """
+
+    def __init__(
+        self,
+        total_tpm: int = 30_000,
+        budget_fraction: float = 0.5,
+        **kwargs,
+    ):
+        """
+        Args:
+            total_tpm: The full API key TPM limit (shared across all agents).
+            budget_fraction: Fraction of total_tpm this sub-agent may use (default 0.5 → 15K).
+            **kwargs: Passed through to TokenThrottle (e.g. strict=True, chunk_size=...).
+        """
+        super().__init__(
+            tokens_per_minute=total_tpm,
+            margin=budget_fraction,
+            **kwargs,
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"SubAgentThrottle(tpm={self.tpm}, budget={self.budget}, "
+            f"used={self._tokens_used}, remaining={self.remaining_tokens}, "
+            f"strict={self.strict})"
         )
 
 

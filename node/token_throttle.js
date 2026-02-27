@@ -10,6 +10,19 @@
  *   for await (const chunk of throttle.consume(largeText)) {
  *     const response = await callYourApi(chunk);
  *   }
+ *
+ * Sub-agent usage (enforces shared budget automatically):
+ *   const { SubAgentThrottle } = require('./token_throttle');
+ *   const throttle = new SubAgentThrottle(); // caps to 15K TPM by default
+ *
+ * Strict mode (throws BudgetExceeded instead of waiting):
+ *   const { TokenThrottle, BudgetExceeded } = require('./token_throttle');
+ *   const throttle = new TokenThrottle({ budget: 15000, strict: true });
+ *   try {
+ *     await throttle.waitIfNeeded(25000);
+ *   } catch (e) {
+ *     if (e instanceof BudgetExceeded) { ... }
+ *   }
  */
 
 class TokenThrottle {
@@ -17,18 +30,26 @@ class TokenThrottle {
    * @param {Object} options
    * @param {number} [options.tokensPerMinute=30000] - Your TPM limit.
    * @param {number} [options.margin=0.85] - Safety factor (0-1).
+   * @param {number|null} [options.budget=null] - Hard cap on effective TPM. Ceiling =
+   *   min(budget, tpm * margin). Useful for sub-agents sharing an API key.
    * @param {number} [options.chunkSize] - Max tokens per chunk. Defaults to budget.
    * @param {number} [options.charsPerToken=4] - Characters-per-token ratio.
+   * @param {boolean} [options.strict=false] - Throw BudgetExceeded instead of waiting
+   *   when a single request exceeds the budget.
    */
   constructor({
     tokensPerMinute = 30000,
     margin = 0.85,
+    budget = null,
     chunkSize = null,
     charsPerToken = 4,
+    strict = false,
   } = {}) {
     this.tpm = tokensPerMinute;
     this.margin = margin;
-    this.budget = Math.floor(tokensPerMinute * margin);
+    this.strict = strict;
+    const effective = Math.floor(tokensPerMinute * margin);
+    this.budget = budget !== null ? Math.min(budget, effective) : effective;
     this.chunkSize = chunkSize || this.budget;
     this.charsPerToken = charsPerToken;
 
@@ -68,8 +89,16 @@ class TokenThrottle {
    * Reserve tokens from the budget, sleeping if necessary.
    * @param {number} tokens
    * @returns {Promise<number>} Milliseconds slept.
+   * @throws {BudgetExceeded} If strict=true and tokens exceeds the budget.
    */
   async waitIfNeeded(tokens) {
+    if (this.strict && tokens > this.budget) {
+      throw new BudgetExceeded(
+        `Request of ${tokens} tokens exceeds budget of ${this.budget} TPM. ` +
+        "Reduce the request size or disable strict mode."
+      );
+    }
+
     this._maybeResetWindow();
 
     if (this._tokensUsed + tokens <= this.budget) {
@@ -173,7 +202,54 @@ class TokenThrottle {
   }
 
   toString() {
-    return `TokenThrottle(tpm=${this.tpm}, budget=${this.budget}, used=${this._tokensUsed}, remaining=${this.remainingTokens})`;
+    return `TokenThrottle(tpm=${this.tpm}, budget=${this.budget}, used=${this._tokensUsed}, remaining=${this.remainingTokens}, strict=${this.strict})`;
+  }
+}
+
+// ── Exceptions ────────────────────────────────────────────────
+
+/**
+ * Thrown in strict mode when a single request exceeds the per-window budget.
+ * Catch this to handle oversized requests explicitly rather than silently waiting.
+ */
+class BudgetExceeded extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "BudgetExceeded";
+  }
+}
+
+// ── Sub-agent convenience ─────────────────────────────────────
+
+/**
+ * Pre-configured TokenThrottle for sub-agent use.
+ *
+ * Enforces a conservative shared-budget ceiling automatically so sub-agents
+ * don't accidentally consume the full API key TPM and starve the main session.
+ *
+ * Default: caps effective TPM to 50% of the total limit (15K on a 30K key).
+ *
+ * @example
+ *   const throttle = new SubAgentThrottle();            // 15K TPM ceiling
+ *   const throttle = new SubAgentThrottle({ budgetFraction: 0.4 }); // 12K TPM
+ */
+class SubAgentThrottle extends TokenThrottle {
+  /**
+   * @param {Object} options
+   * @param {number} [options.totalTpm=30000] - Full API key TPM limit (shared across all agents).
+   * @param {number} [options.budgetFraction=0.5] - Fraction of totalTpm this sub-agent may use.
+   * @param {...*} rest - Passed through to TokenThrottle (e.g. strict, chunkSize).
+   */
+  constructor({ totalTpm = 30000, budgetFraction = 0.5, ...rest } = {}) {
+    super({
+      tokensPerMinute: totalTpm,
+      margin: budgetFraction,
+      ...rest,
+    });
+  }
+
+  toString() {
+    return `SubAgentThrottle(tpm=${this.tpm}, budget=${this.budget}, used=${this._tokensUsed}, remaining=${this.remainingTokens}, strict=${this.strict})`;
   }
 }
 
@@ -216,4 +292,4 @@ function estimateUrlTokens(url, charsPerToken = 4) {
   });
 }
 
-module.exports = { TokenThrottle, estimateFileTokens, estimateUrlTokens };
+module.exports = { TokenThrottle, SubAgentThrottle, BudgetExceeded, estimateFileTokens, estimateUrlTokens };
