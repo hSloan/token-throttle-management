@@ -93,7 +93,6 @@ if tokens and tokens > 25000:
 3. **Lower margin to 0.7** when making concurrent API calls
 4. **Strip HTML/JS/CSS** from web pages before estimating — raw HTML inflates token count 2-5x
 
-
 ---
 
 ## Concurrent Sub-Agent Budget Rule
@@ -119,7 +118,7 @@ Sub-agents must budget for ~15K–20K TPM effective to leave headroom for the ma
 
 Before reading ANY file or fetching ANY URL:
 1. Estimate tokens: file → file_size/4, URL → HEAD Content-Length/4, text → len(text)/4
-2. If > 50K tokens → chunk using .../skills/token-throttle-management/python/token_throttle.py
+2. If > 20K tokens → chunk using `TokenThrottle.consume()`
 3. On 429 error → wait 60s, retry with smaller chunks
 4. Track cumulative token usage across all reads in a 60s window
 5. Never read multiple large files back-to-back without throttle checks
